@@ -1,0 +1,242 @@
+================================================================================
+  AI RECRUITMENT SIMULATION & INTELLIGENT CANDIDATE MATCHING
+  TEACHER & VIVA EXPLANATION GUIDE
+================================================================================
+
+This document is prepared to help you confidently explain your project,
+architecture, mathematical logic, and design choices to your teacher or
+external examiner.
+
+--------------------------------------------------------------------------------
+TABLE OF CONTENTS:
+  1. The 1-Minute Elevator Pitch (How to summarize the project quickly)
+  2. The Big Picture: Why 3 Neural Networks?
+  3. Network 1: Bi-LSTM + CRF (Named Entity Recognition)
+  4. Network 2: Siamese Neural Network (Semantic Similarity)
+  5. Network 3: Deep Ranking Network MLP (Final Match Scoring)
+  6. End-to-End Pipeline Workflow
+  7. Top 7 Viva / Teacher Questions & Exact Answers to Give
+--------------------------------------------------------------------------------
+
+
+================================================================================
+1. THE 1-MINUTE ELEVATOR PITCH
+================================================================================
+"Traditional Applicant Tracking Systems (ATS) rely on simple keyword matching,
+which fails when candidates use synonyms or when candidates have keywords but
+lack required experience.
+
+To solve this, we implemented a 3-Stage Custom Neural Network Pipeline:
+  1. A Bi-LSTM + CRF model that reads unstructured resume text and extracts
+     entities: Skills, Organizations, Education, Dates, and Experience.
+  2. A Siamese Neural Network with shared weights trained with Contrastive Loss
+     to measure semantic similarity between the candidate and the Job Description.
+  3. A Deep Ranking Network MLP that combines the semantic similarity score with
+     structured entity features (years of experience, degree level, skill count)
+     to predict the final hiring decision and rank candidates on a leaderboard.
+
+All models were built and trained from scratch, and we wrapped everything in an
+interactive Streamlit dashboard."
+
+
+================================================================================
+2. THE BIG PICTURE: WHY 3 NEURAL NETWORKS INSTEAD OF JUST ONE?
+================================================================================
+If a teacher asks: "Why didn't you just build one single neural network?"
+
+Answer:
+"A single network cannot handle both unstructured sequence extraction and
+cross-document semantic comparison efficiently.
+  - Parsing a resume requires Sequence Labeling (token-level classification).
+  - Comparing a resume to a JD requires Metric Learning (latent space distance).
+  - Making the hiring decision requires Tabular Multi-Factor Ranking.
+
+Separating the system into 3 specialized stages mirrors modern industrial NLP
+architectures (like Google Search and LinkedIn Talent Match) and makes each
+stage explainable and modular."
+
+
+================================================================================
+3. NETWORK 1: Bi-LSTM + CRF (Named Entity Recognition)
+================================================================================
+File: bilstm_crf_model.py
+Trained Weights: ner_model.pth
+
+A. WHAT IT DOES:
+   Takes raw resume text and labels every word with a BIO tag (Begin, Inside,
+   Outside) for 5 entity categories:
+   - SKILL  (e.g., Python, TensorFlow, Machine Learning)
+   - ORG    (e.g., Google, Infosys, Stanford, MIT)
+   - EDU    (e.g., Bachelor, Master, PhD, Computer Science)
+   - DATE   (e.g., 2021, 2023, January 2020)
+   - EXP    (e.g., 5 years, 6 months)
+
+B. WHY Bi-LSTM (Bidirectional Long Short-Term Memory)?
+   - Text has context in both directions. For example, in "machine learning
+     engineer", understanding "learning" requires looking both backwards to
+     "machine" and forwards to "engineer".
+   - Forward LSTM reads left-to-right (past context).
+   - Backward LSTM reads right-to-left (future context).
+   - Concatenating both gives rich contextual embeddings for every word.
+
+C. WHY CRF (Conditional Random Field) ON TOP OF Bi-LSTM?
+   - Standard Softmax treats each word's tag independently. It doesn't know that
+     an 'I-SKILL' tag CANNOT legally follow an 'O' tag without a 'B-SKILL' first!
+   - The CRF layer explicitly models TRANSITION PROBABILITIES between tags.
+   - It learns a 13x13 transition matrix A, where A[j, k] is the score of
+     transitioning from tag j to tag k.
+   - Training: We minimize Negative Log-Likelihood (NLL) using the Forward
+     Algorithm to compute the partition function Z(x).
+   - Inference: We use the VITERBI ALGORITHM (dynamic programming) to find the
+     globally optimal path through all possible tag sequences.
+
+D. ARCHITECTURE:
+   Word Tokens -> Embedding(vocab, 64) -> BiLSTM(128) -> Linear(13) -> CRF Layer
+
+
+================================================================================
+4. NETWORK 2: SIAMESE NEURAL NETWORK (Resume-JD Semantic Matching)
+================================================================================
+File: siamese_model.py
+Trained Weights: siamese_model.pth
+
+A. WHAT IT DOES:
+   Takes Resume text and Job Description text and projects both into a shared
+   64-dimensional semantic embedding space to determine how similar they are.
+
+B. WHY A SIAMESE NETWORK?
+   - Resumes and Job Descriptions have very different lengths, formats, and styles.
+   - A Siamese Network uses TWO IDENTICAL BRANCHES with SHARED WEIGHTS.
+   - Because weights are shared, both the resume and the JD are mapped using the
+     exact same semantic rules.
+
+C. LOSS FUNCTION: CONTRASTIVE LOSS (Hadsell et al.)
+   Formula:
+     Loss = 0.5 * y * d^2 + 0.5 * (1 - y) * max(0, margin - d)^2
+
+   Where:
+     - y = 1 for matching pairs (similar resume & JD)
+     - y = 0 for non-matching pairs
+     - d = Euclidean distance between normalized latent vectors: ||u - v||_2
+     - margin = 2.0
+
+   Explanation in plain English:
+   - If the resume and JD MATCH (y=1): The loss penalizes any distance between them,
+     pulling their embeddings closer together.
+   - If they DO NOT MATCH (y=0): The loss only activates if they are closer than
+     the margin (2.0), pushing their embeddings apart until distance >= 2.0.
+
+D. SIMILARITY SCORE:
+   Similarity = 1.0 / (1.0 + distance)   -> yields a value strictly between 0 and 1.
+
+
+================================================================================
+5. NETWORK 3: DEEP RANKING NETWORK MLP (Final Candidate Match Score)
+================================================================================
+File: deep_ranking_model.py
+Trained Weights: ranking_model.pth
+
+A. WHAT IT DOES:
+   Predicts the final match percentage (0% to 100%) and decision (SHORTLISTED
+   vs REJECTED) by combining the holistic semantic score with factual qualifications.
+
+B. WHY IS THIS NEEDED IF WE ALREADY HAVE SIAMESE SIMILARITY?
+   Very important viva point!
+   "Semantic similarity alone cannot distinguish seniority or qualification level.
+   A fresh graduate who lists 'Python, Machine Learning' might have 90% semantic
+   similarity to a Senior ML Architect job description, but they only have 0.5
+   years of experience! The Deep Ranking MLP prevents this false positive by
+   evaluating both semantic alignment and hard credentials."
+
+C. INPUT FEATURE VECTOR (6 Dimensions):
+   1. Siamese Semantic Similarity (0.0 - 1.0)
+   2. Number of Skills Extracted (from BiLSTM-CRF)
+   3. Years of Experience (from BiLSTM-CRF)
+   4. Education Level Hierarchy (0=None, 1=Diploma, 2=Bachelor, 3=Master, 4=PhD)
+   5. Organizations Count (from BiLSTM-CRF)
+   6. Projects Count
+
+D. ARCHITECTURE:
+   Input(6) -> Linear(128) + BatchNorm + ReLU + Dropout
+            -> Linear(64) + BatchNorm + ReLU + Dropout
+            -> Linear(32) + ReLU
+            -> Linear(1) + Sigmoid -> Output Probability [0.0, 1.0]
+
+E. LOSS FUNCTION: HYBRID RANKING LOSS
+   Loss = 0.6 * Binary_Cross_Entropy + 0.4 * Margin_Ranking_Loss
+   - BCE ensures the probability is well-calibrated (0% to 100%).
+   - Margin Ranking Loss ensures stronger candidates strictly rank higher than
+     weaker candidates on a competitive leaderboard.
+
+
+================================================================================
+6. COMPLETE END-TO-END WORKFLOW (How Everything Connects)
+================================================================================
+File: inference_pipeline.py & app.py
+
+Step 1: Recruiter enters a Job Description and uploads a Candidate's Resume PDF.
+Step 2: `resume_parser.py` extracts raw text from the PDF.
+Step 3: `bilstm_crf_model.py` tags the tokens and extracts structured entities:
+        skills, organizations, education degree, and years of experience.
+Step 4: `siamese_model.py` embeds both the resume text and the JD text into the
+        shared 64-dim space and calculates cosine semantic similarity.
+Step 5: `deep_ranking_model.py` packages the Siamese score and the 5 NER features
+        into a 6D vector and computes the final Match Percentage.
+Step 6: Streamlit UI displays:
+        - Big decision banner: SHORTLISTED (>=50%) or REJECTED (<50%)
+        - 3-column breakdown displaying outputs from all 3 individual neural networks
+        - Multi-candidate leaderboard ranking all applicants.
+
+
+================================================================================
+7. TOP 7 VIVA / TEACHER QUESTIONS & EXACT ANSWERS
+================================================================================
+
+Q1: "What is the difference between an LSTM and a Bi-LSTM?"
+A1: A standard LSTM reads text strictly from left to right (past context only).
+    A Bi-LSTM runs two separate LSTM layers: one forwards (left-to-right) and one
+    backwards (right-to-left), concatenating their hidden states. This allows the
+    model to know what words come both before and after the current token.
+
+Q2: "Why put a CRF layer on top of Bi-LSTM instead of standard Softmax?"
+A2: Softmax makes independent token-level predictions, which often produces
+    invalid tag sequences (e.g., predicting 'I-SKILL' after 'O'). The CRF layer
+    models dependencies between neighboring tags through a transition matrix and
+    uses the Viterbi algorithm to guarantee a globally optimal, syntactically
+    valid tag sequence.
+
+Q3: "What is Contrastive Loss in your Siamese Network?"
+A3: Contrastive loss is a distance-based loss function. For matching resume-JD
+    pairs, it minimizes Euclidean distance. For non-matching pairs, it enforces
+    a minimum margin (we used 2.0). If non-matching pairs are closer than the
+    margin, it penalizes the model and pushes them apart.
+
+Q4: "Why do Siamese network branches share weights?"
+A4: Sharing weights guarantees that both the resume and the job description are
+    projected into the exact same vector space under identical transformations.
+    If they had different weights, a resume and a JD with identical text would map
+    to different coordinates.
+
+Q5: "How is your system different from standard keyword ATS systems?"
+A5: Standard ATS only counts exact keyword matches. Our system uses:
+    1. BiLSTM-CRF for contextual entity recognition (understands multi-word skills
+       and distinguishes education from skills).
+    2. Siamese network for semantic similarity (understands related concepts).
+    3. Deep Ranking MLP to combine semantics with hard criteria (years of
+       experience, education level).
+
+Q6: "How did you train these models without a massive public dataset?"
+A6: We implemented domain-specific synthetic data generators:
+    - For NER: Generated 500 template-based sentences with BIO tags covering
+      technical skills, universities, degrees, and dates.
+    - For Siamese: Generated 2,000 paired combinations of matching and non-matching
+      resumes and job descriptions.
+    - For Ranking: Generated 3,000 multi-feature vectors with realistic noise.
+
+Q7: "Where are the trained model files saved?"
+A7: They are saved as PyTorch checkpoint files in the project root:
+    - ner_model.pth      (~738 KB)
+    - siamese_model.pth  (~322 KB)
+    - ranking_model.pth  (~54 KB)
+    All load automatically in under 1 second during inference.
+================================================================================
