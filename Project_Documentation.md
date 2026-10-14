@@ -1,98 +1,249 @@
-# AI Recruitment Simulation System - Project Documentation
+# AI Recruitment Simulation & Intelligent Candidate Matching System
+## Comprehensive Technical Documentation
 
-This document outlines the architecture, mathematical foundations, and module breakdown of the "AI Recruitment Simulation System" developed using pure Python and NumPy from first principles. No high-level machine learning frameworks (such as PyTorch or TensorFlow) were used, demonstrating a deep understanding of core neural network concepts.
+---
 
-## 0. Project Directory Layout & File Overview
+## 1. Project Overview & Architecture
 
-The project follows a modular structure. Below is the full layout and description of every file and folder, including the external libraries utilized:
+This project implements an end-to-end AI recruitment system composed of two complementary subsystems:
+
+1. **Custom Neural Networks for Intelligent Candidate Matching (Advanced Pipeline)**:
+   - **Network 1: Bi-LSTM + CRF** — Sequence labeling / Named Entity Recognition (NER) to extract skills, organizations, education, dates, and experience from resumes.
+   - **Network 2: Siamese Neural Network** — Twin-branch neural network with shared weights trained via Contrastive Loss to compute semantic similarity between candidate resumes and job descriptions.
+   - **Network 3: Deep Ranking Network MLP** — Deep ranking multi-layer perceptron taking the Siamese similarity score and NER-extracted features to compute final candidate-job match percentages and rank applicants on a leaderboard.
+
+2. **NumPy Baseline Screening Network (First-Principles Implementation)**:
+   - Built purely with Python and NumPy from scratch (no high-level ML framework).
+   - Demonstrates foundational neural network concepts: forward propagation, backpropagation with the chain rule, weight initialization, and binary classification.
+
+---
+
+## 2. Directory Layout & File Overview
 
 ```text
 NN mini proj/
 │
-├── __pycache__/                 # Compiled Python files automatically generated during execution
-├── sample_resumes/              # Directory holding sample PDF resumes (created by verify_pipeline.py)
-│   ├── strong_candidate.pdf     # Generated PDF demonstrating a hireable applicant profile
-│   └── weak_candidate.pdf       # Generated PDF demonstrating a rejectable applicant profile
+├── sample_resumes/              # PDF resumes for testing
+│   ├── strong_candidate.pdf     # High-skill, high-experience candidate
+│   └── weak_candidate.pdf       # Low-skill, entry-level candidate
 │
-├── app.py                       # (Libraries: streamlit, numpy, pandas, os) 
-│                                # Main Streamlit interactive GUI. Loads the trained model, accepts PDF uploads, and allows manual parameter tweaking and batch prediction.
-├── generate_data.py             # (Libraries: numpy, csv) 
-│                                # Generates synthetic candidate datasets with simulated subjectivity/noise and exports them to CSVs.
-├── inspect_weights.py           # (Libraries: numpy) 
-│                                # Debugging script to print the shapes and sample values of the saved `model_weights.npz` matrices.
-├── model_base.py                # (Libraries: numpy) 
-│                                # Core Neural Network logic from scratch (ApplicantScreeningNN class). Contains forward/backward propagation, loss computation, and min-max normalization.
-├── recruitment_simulation.py    # (Libraries: numpy) 
-│                                # A standalone script containing dataset generation, explicit model structure, training, evaluating, and a manual batch recruitment screening simulation.
-├── resume_parser.py             # (Libraries: pypdf, re) 
-│                                # Extracts raw text from PDF resumes and applies keyword matching (tech/soft skills) and regex (experience) to convert it into a 4-feature numeric vector.
-├── test_pdf.py                  # Empty script, intended for isolated testing of PDF operations.
-├── train.py                     # (Libraries: numpy, csv) 
-│                                # Loads datasets, normalizes them, instantiates the neural network, trains it via gradient descent, evaluates metrics, and saves `model_weights.npz`.
-├── verify_pipeline.py           # (Libraries: os, csv, numpy, fpdf, resume_parser) 
-│                                # Comprehensive 5-phase testing suite. Verifies datasets, model weight matrices shapes, manual forward passes, PDF parsing validity, and end-to-end inference logic.
+├── bilstm_crf_model.py          # Network 1: Custom Bi-LSTM + CRF NER from scratch
+├── siamese_model.py             # Network 2: Siamese Network with Contrastive Loss
+├── deep_ranking_model.py        # Network 3: Deep Ranking Network MLP + Ranking Loss
+├── inference_pipeline.py        # End-to-end inference connecting all 3 neural networks
+├── train_all_models.py          # Unified CPU-optimized training script for all 3 models
+├── test_pdf.py                  # Verification test for PDF parsing + 3-network inference
 │
-├── train_candidates.csv         # 450 synthetic training records generated by `generate_data.py`.
-├── test_candidates.csv          # 100 synthetic testing records generated by `generate_data.py`.
-├── model_weights.npz            # Binary artifact storing the finalized network weights, biases, and normalization scaling factors.
-└── Project_Documentation.md     # This comprehensive documentation file.
+├── ner_model.pth                # Trained weights + vocabulary for Bi-LSTM + CRF
+├── siamese_model.pth            # Trained weights + vectorizer for Siamese Network
+├── ranking_model.pth            # Trained weights + normalizer for Deep Ranking MLP
+│
+├── app.py                       # Enhanced Streamlit GUI (Tab 1: Neural Matching, Tab 2: PDF, Tab 3: Manual)
+├── model_base.py                # Pure NumPy baseline neural network class
+├── train.py                     # Baseline NumPy training script
+├── generate_data.py             # Baseline synthetic CSV dataset generator
+├── resume_parser.py             # PDF text extraction & regex parser
+├── verify_pipeline.py           # Baseline 5-phase testing suite
+├── train_candidates.csv         # 450 synthetic baseline training records
+├── test_candidates.csv          # 100 synthetic baseline test records
+├── model_weights.npz            # Saved weights for NumPy baseline model
+├── implementation_progress.txt  # Implementation milestone tracker
+└── Project_Documentation.md     # This comprehensive technical guide
 ```
 
-## 1. Dataset Generation & Preprocessing (`generate_data.py`)
+---
 
-### Synthetic Data Creation
-To train the neural network, synthetic datasets are generated and exported to `train_candidates.csv` (450 samples) and `test_candidates.csv` (100 samples). Each candidate is represented by four distinct features:
-*   **Years of Experience** (Scale: 0.0 - 10.0)
-*   **Technical Score** (Scale: 20.0 - 100.0)
-*   **Soft Skills Score** (Scale: 25.0 - 100.0)
-*   **Projects Completed** (Scale: 0 - 6)
+## 3. Network 1: Bi-LSTM + CRF (Named Entity Recognition)
 
-### Realistic Target Label Logic & Subjectivity Injection
-The dataset assigns a binary target label (`1 = Shortlisted`, `0 = Rejected`) based on a weighted composite formula:
-- $40\%$ Technical Score + $25\%$ Soft Skills Score + $20\%$ Normalized Experience + $15\%$ Normalized Projects.
-- **Gaussian Noise:** A standard deviation of `5.0` is injected into the final score to simulate real-world interviewer subjectivity.
-- **Edge Cases:** A `3%` random label flip is introduced to prevent the model from overfitting to a purely deterministic boundary, capping target accuracy realistically around `82% - 86%`.
+### Purpose
+To parse unstructured text from candidate resumes and extract structured entities:
+- **Skills** (e.g., Python, TensorFlow, Machine Learning, React, AWS)
+- **Organizations** (e.g., Google, Infosys, Stanford, MIT)
+- **Education** (e.g., Bachelor, Master, PhD, Computer Science)
+- **Dates** (e.g., 2021, 2023, January 2020)
+- **Experience** (e.g., 5 years, 6 months)
 
-## 2. Neural Network Architecture (`model_base.py`)
+### Architecture
+```text
+Input Tokens
+     ↓
+Embedding Layer (vocab_size, 64)
+     ↓
+Dropout (p = 0.3)
+     ↓
+Bidirectional LSTM (2 layers, hidden_dim = 128 // 2 = 64 per direction)
+  - Forward LSTM captures past context
+  - Backward LSTM captures future context
+     ↓
+Linear Projection (128 → 13 tag classes)
+     ↓
+Conditional Random Field (CRF) Layer
+  - Models transition probabilities between adjacent tags
+  - Prevents illegal sequences (e.g., I-SKILL after O)
+     ↓
+Viterbi Decoding → Optimal Tag Sequence
+```
 
-The model is a standard feedforward Multi-Layer Perceptron (MLP) built systematically using explicit matrix dimensions.
+### Mathematical Formulation
+The CRF models the conditional probability of a tag sequence $\mathbf{y} = (y_1, y_2, \dots, y_n)$ given token emissions $\mathbf{x}$:
 
-### Layer Architecture
-*   **Input Layer:** 4 neurons (matching the 4 input features).
-*   **Hidden Layer:** 6 neurons. Uses the **ReLU (Rectified Linear Unit)** activation function to introduce non-linearity.
-*   **Output Layer:** 1 neuron. Uses the **Sigmoid** activation function to output a probability between 0.0 and 1.0 indicating candidate fit.
+$$P(\mathbf{y} \mid \mathbf{x}) = \frac{\exp(\text{Score}(\mathbf{x}, \mathbf{y}))}{\sum_{\mathbf{y}'} \exp(\text{Score}(\mathbf{x}, \mathbf{y}'))} = \frac{\exp(\text{Score}(\mathbf{x}, \mathbf{y}))}{Z(\mathbf{x})}$$
 
-### Weight Initialization & Normalization
-*   **He (Kaiming) Initialization** is applied to the hidden layer weights since it is optimized for ReLU activations.
-*   **Xavier (Glorot) Initialization** is applied to the output layer since it uses a Sigmoid activation.
-*   **Min-Max Normalization:** Custom logic scales all input vectors strictly between `0` and `1` dynamically storing `min_vals` and `max_vals`.
+Where the sequence score is the sum of emission and transition scores:
 
-## 3. Training & Backpropagation Engine (`train.py`)
+$$\text{Score}(\mathbf{x}, \mathbf{y}) = \sum_{i=1}^n P_{i, y_i} + \sum_{i=0}^n A_{y_i, y_{i+1}}$$
 
-### Forward & Backward Propagation
-The forward pass is executed via explicit matrix dot products using the equation: $Z = X \cdot W + b$. 
-Backpropagation is derived explicitly via the Chain Rule to calculate gradients (`dZ2`, `dW2`, `db2`, `dA1`, `dZ1`, `dW1`, `db1`).
+- $P_{i, j}$: Emission score of token $i$ being assigned tag $j$ from the Bi-LSTM output.
+- $A_{j, k}$: Transition score of transitioning from tag $j$ to tag $k$.
+- $Z(\mathbf{x})$: Partition function, computed efficiently using the **Forward Algorithm** via log-sum-exp dynamic programming.
 
-### Loss Calculation & Model Persistence
-The model optimizes performance by minimizing the **Binary Cross-Entropy (BCE) Loss** over 2000 epochs. After evaluating on the test set, the final architecture weights (`W1`, `b1`, `W2`, `b2`) and normalization bounds are serialized into a binary `model_weights.npz` artifact for production inference.
+**Training Objective**: Minimize Negative Log-Likelihood (NLL):
+$$\mathcal{L}_{\text{CRF}} = -\log P(\mathbf{y}_{\text{gold}} \mid \mathbf{x}) = \log Z(\mathbf{x}) - \text{Score}(\mathbf{x}, \mathbf{y}_{\text{gold}})$$
 
-## 4. Automated Resume Parser (`resume_parser.py`)
+**Inference**: **Viterbi Algorithm** dynamic programming finds the global highest-scoring tag sequence $\mathbf{y}^* = \arg\max_{\mathbf{y}} \text{Score}(\mathbf{x}, \mathbf{y})$.
 
-The system includes a dedicated module that utilizes `pypdf` and `re` (Regular Expressions) to translate raw PDF text into our 4-element numerical vector:
-*   **Fractional Experience Extraction:** Captures phrases like "2 years" or "6 months" and correctly translates them into fractional years (e.g., `2.5`). 
-*   **Skill Scoring:** Matches document keywords against custom `TECH_SKILLS` and `SOFT_SKILLS` dictionaries to calculate scores dynamically out of 100.
-*   **Projects:** Extracts project volume based on action-oriented keywords.
+---
 
-## 5. Interactive Streamlit Dashboard (`app.py`)
+## 4. Network 2: Siamese Neural Network (Resume–JD Semantic Matching)
 
-A full interactive GUI provides a user-friendly wrapper over the raw neural network:
-*   **Resume Screening (Tab 1):** Users can upload a real PDF resume. The app parses the file, displays the extracted vectors, and executes a real-time manual Numpy forward pass—exposing the underlying matrix math ($Z1 \rightarrow A1 \rightarrow Z2 \rightarrow Sigmoid$) alongside the final Fit Score percentage.
-*   **Manual Simulation (Tab 2):** Provides sliders to manipulate the 4 input features manually for instantaneous prediction. It also outputs a ranked batch leaderboard analyzing the entire unseen test set.
+### Purpose
+To project candidate resumes and job descriptions into a shared semantic latent space, allowing the system to compute their semantic alignment using distance/similarity metrics.
 
-## 6. End-to-End Verification Suite (`verify_pipeline.py`)
+### Twin Architecture with Shared Weights
+```text
+   Resume Text                      Job Description Text
+        ↓                                    ↓
+Text Vectorizer (Bag-of-Words)        Text Vectorizer (Bag-of-Words)
+        ↓                                    ↓
+┌──────────────────┐                 ┌──────────────────┐
+│ Branch A (MLP)   │                 │ Branch B (MLP)   │
+│ Linear(139 → 128)│                 │ Linear(139 → 128)│
+│ BatchNorm + ReLU │   SHARED        │ BatchNorm + ReLU │
+│ Dropout(0.2)     │   WEIGHTS       │ Dropout(0.2)     │
+│ Linear(128 → 64) │   (W_A = W_B)   │ Linear(128 → 64) │
+│ L2 Normalization │                 │ L2 Normalization │
+└──────────────────┘                 └──────────────────┘
+        ↓                                    ↓
+Latent Vector u (64-dim)             Latent Vector v (64-dim)
+        └─────────────────┬──────────────────┘
+                          ↓
+              Cosine Similarity / Distance
+              d(u, v) = ||u - v||_2
+```
 
-To guarantee system integrity for academic defense, an automated 5-phase testing suite is included:
-*   **Phase 1:** Checks CSV dataset row counts and numerical ranges.
-*   **Phase 2:** Verifies the `model_weights.npz` artifact contains correctly shaped $(4 \times 6 \times 1)$ matrices devoid of NaNs.
-*   **Phase 3:** Executes a strict sanity-check math test using extreme synthetic profiles.
-*   **Phase 4 & 5:** Dynamically generates PDF test candidates, passes them through the PDF parser, and verifies that the End-to-End Neural Network appropriately shortlists or rejects them.
+### Contrastive Loss Formulation
+Trained with **Hadsell et al. Contrastive Loss**:
+
+$$\mathcal{L}_{\text{Contrastive}}(y, d) = \frac{1}{2} y \cdot d^2 + \frac{1}{2} (1 - y) \cdot \max(0, m - d)^2$$
+
+Where:
+- $y \in \{0, 1\}$: Ground-truth label ($1$ = matching pair, $0$ = non-matching pair).
+- $d = \|\mathbf{u} - \mathbf{v}\|_2$: Euclidean distance between normalized latent vectors.
+- $m$: Margin hyperparameter ($m = 2.0$), penalizing non-matching pairs that are closer than distance $m$.
+
+**Semantic Similarity Score**:
+$$\text{Sim}(\mathbf{u}, \mathbf{v}) = \frac{1}{1 + d(\mathbf{u}, \mathbf{v})} \in (0, 1]$$
+
+---
+
+## 5. Network 3: Deep Ranking Network MLP (Final Match Scoring)
+
+### Purpose
+Combines the holistic semantic similarity score with structured candidate attributes (extracted by the Bi-LSTM+CRF) to predict a final match percentage and rank candidates on a leaderboard.
+
+### Input Vector (6 Dimensions)
+1. **Siamese Similarity**: Output from Network 2 ($0.0 - 1.0$)
+2. **Skill Count**: Number of unique domain skills extracted from resume
+3. **Experience (Years)**: Numeric total years of experience
+4. **Education Level**: Encoded hierarchy (0 = None, 1 = Diploma, 2 = Bachelor, 3 = Master, 4 = PhD)
+5. **Organization Count**: Reputable previous employers/institutions
+6. **Project Count**: Volume of completed technical projects
+
+### Architecture
+```text
+Input Feature Vector (6 dimensions)
+     ↓
+Linear(6 → 128) + BatchNorm + ReLU + Dropout(0.2)
+     ↓
+Linear(128 → 64) + BatchNorm + ReLU + Dropout(0.2)
+     ↓
+Linear(64 → 32) + ReLU
+     ↓
+Linear(32 → 1) + Sigmoid Activation
+     ↓
+Final Match Probability ∈ [0, 1]  (Scaled to 0 - 100%)
+```
+
+### Hybrid Ranking Loss
+Trained with a composite loss function combining point-wise classification and pair-wise ranking:
+
+$$\mathcal{L}_{\text{Total}} = \alpha \cdot \mathcal{L}_{\text{BCE}} + (1 - \alpha) \cdot \mathcal{L}_{\text{MarginRanking}}$$
+
+- $\mathcal{L}_{\text{BCE}} = - [y \log(\hat{y}) + (1 - y) \log(1 - \hat{y})]$
+- $\mathcal{L}_{\text{MarginRanking}} = \max(0, -y_{\text{pair}} \cdot (\hat{y}_1 - \hat{y}_2) + \text{margin})$
+- $\alpha = 0.6$ balances calibrated probability output with pairwise ordering.
+
+---
+
+## 6. End-to-End Pipeline & User Interface
+
+### Pipeline Flow (`inference_pipeline.py`)
+```text
+Candidate Resume (PDF or Raw Text) + Job Description
+                      ↓
+  [Step 1] Bi-LSTM + CRF NER:
+           Extracts Skills, Organizations, Education, Dates, Experience
+                      ↓
+  [Step 2] Siamese Neural Network:
+           Computes semantic embedding similarity between Resume and JD
+                      ↓
+  [Step 3] Deep Ranking MLP:
+           Takes [Siamese Score, Skill Count, Exp, Edu Level, Orgs, Projects]
+                      ↓
+  Final Output:
+  • Decision: SHORTLISTED (>= 50%) or REJECTED (< 50%)
+  • Match Percentage & Confidence Score
+  • Full entity breakdown & feature table
+  • Leaderboard rank among competing applicants
+```
+
+### Streamlit Application (`app.py`)
+- **Tab 1: Intelligent Matching (3 Neural Networks)**
+  - Dual-panel UI: Job Description input on left, Resume input (PDF upload or text paste) on right.
+  - Live prediction card with decision badge, match score gauge, and confidence metric.
+  - Multi-column visual breakdown:
+    - Column 1: Bi-LSTM + CRF extracted entities.
+    - Column 2: Siamese Network semantic similarity bar with descriptive match classification.
+    - Column 3: Deep Ranking MLP feature table and score.
+  - Batch Candidate Comparison: Compare 2 to 10 candidates simultaneously against one JD on a ranked leaderboard.
+- **Tab 2: Resume Screening (PDF)**
+  - Original single-PDF screening forward pass with under-the-hood matrix math inspection.
+- **Tab 3: Manual Simulation**
+  - Sliders for experience, technical score, soft skills, and projects, plus batch testing leaderboard.
+
+---
+
+## 7. Verification & Testing Evidence
+
+All modules include automated verification tests:
+1. `python train_all_models.py` — Trains and saves all 3 models in ~2.5 minutes on CPU.
+2. `python inference_pipeline.py` — Tests Alice (Senior Data Scientist match), Bob (Web Dev), and Charlie (Frontend) on a Senior Data Scientist role:
+   - Alice: **79.1% match (SHORTLISTED)**
+   - Bob: **10.9% match (REJECTED)**
+   - Charlie: **16.7% match (REJECTED)**
+3. `python test_pdf.py` — Tests PDF extraction and neural scoring:
+   - `strong_candidate.pdf`: **99.7% match (SHORTLISTED)**
+   - `weak_candidate.pdf`: **24.6% match (REJECTED)**
+4. `python verify_pipeline.py` — Full 5-phase test suite for baseline dataset, weights, and logic.
+
+---
+
+## 8. Summary for Project Viva / Defense
+
+Key points to present during evaluation:
+1. **Why Bi-LSTM + CRF instead of standard NER?**
+   The Bi-LSTM captures bidirectional contextual token representations, while the CRF explicitly learns valid tag transition dependencies (preventing syntactically invalid sequences like an `I-SKILL` without a prior `B-SKILL`).
+2. **Why a Siamese Network with Contrastive Loss?**
+   Standard classifiers fail when matching arbitrary text pairs because resumes and JDs have different lengths and wording. Siamese networks learn a shared metric space where similar semantic pairs are pulled together and dissimilar pairs are pushed apart by at least margin $m$.
+3. **Why Deep Ranking MLP on top of Siamese?**
+   Semantic similarity alone doesn't measure seniority or qualification fit. A junior developer with Python skills has high semantic similarity to a Senior Architect role, but lacks experience years and education credentials. The Deep Ranking MLP integrates both semantic and structured factors.
